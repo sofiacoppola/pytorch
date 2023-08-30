@@ -38,6 +38,10 @@ from .virtualized import V
 
 log = logging.getLogger(__name__)
 
+SchedulerNodeList = List[Any]
+BufMeta = collections.namedtuple("BufMeta", ["name", "n_origin"])
+GRAPHVIZ_COMMAND_SCALABLE = ["dot", "-Gnslimit=2", "-Gnslimit1=2", "-Gmaxiter=5000"]
+
 
 @functools.lru_cache(None)
 def has_dot():
@@ -173,6 +177,38 @@ def create_fx_from_snodes(snodes: List[BaseSchedulerNode]) -> fx.Graph:
 
     graph.output(outputs[0] if len(outputs) == 1 else tuple(outputs))
     return graph
+
+
+def get_orig_fx_node_name_to_buf_meta(nodes: SchedulerNodeList):
+    node_name_to_buf_meta = {}
+    for node in nodes:
+        ir_node = node.node
+        if ir_node is None or ir_node.origins is None:
+            continue
+        buf_name = ir_node.name
+        buf_meta = BufMeta(buf_name, len(ir_node.origins))
+        for origin in ir_node.origins:
+            node_name = origin.name
+            # when buf1 and buf2 both have origin=node1
+            # we draw node1 according to buf1
+            if node_name not in node_name_to_buf_meta:
+                node_name_to_buf_meta[node_name] = buf_meta
+    return node_name_to_buf_meta
+
+
+def annotate_orig_fx_with_snodes(
+    gm: torch.fx.GraphModule, snodes: SchedulerNodeList
+) -> None:
+    """
+    Creates a FX Graph from a list of SchedulerNode objects.
+    """
+    BufMeta = collections.namedtuple("BufMeta", ["name", "n_origin"])
+    node_name_to_buf_meta = get_orig_fx_node_name_to_buf_meta(snodes)
+    if node_name_to_buf_meta is None:
+        return
+    for node in gm.graph.nodes:
+        if node.name in node_name_to_buf_meta:
+            node.meta["buf_meta"] = node_name_to_buf_meta.get(node.name)
 
 
 @contextlib.contextmanager
@@ -352,9 +388,6 @@ class DebugContext:
             return ignored
 
 
-SchedulerNodeList = List[Any]
-
-
 class DebugFormatter:
     def __init__(self, handler):
         self.fopen = handler.fopen
@@ -388,6 +421,16 @@ class DebugFormatter:
 
     def graph_diagram(self, nodes: SchedulerNodeList):
         draw_buffers(nodes, fname=self.filename("graph_diagram.svg"))
+
+    def draw_orig_fx_graph(self, gm: torch.fx.GraphModule, nodes: SchedulerNodeList):
+        annotate_orig_fx_with_snodes(gm, nodes)
+        draw_graph(
+            gm,
+            fname=self.filename("orig_fx_graph_diagram.svg"),
+            clear_meta=False,
+            prog=GRAPHVIZ_COMMAND_SCALABLE,
+            parse_stack_trace=True,
+        )
 
     def output_code(self, filename):
         shutil.copy(filename, self.filename("output_code.py"))
