@@ -43,6 +43,7 @@ from .bytecode_transformation import (
     is_generator,
     unique_id,
 )
+from .code_context import code_context
 from .codegen import PyCodegen
 from .exc import ArgsMismatchError, BackendCompilerFailed, unimplemented, Unsupported
 from .guards import GuardBuilder
@@ -2141,6 +2142,14 @@ class InstructionTranslator(InstructionTranslatorBase):
             tuple(null_idxes),
         )
 
+        orig_graphmodule_maybe = code_context.get_context(self.f_code).get(
+            "orig_graphmodule", None
+        )
+        if orig_graphmodule_maybe is not None:
+            code_context.get_context(new_code)[
+                "orig_graphmodule"
+            ] = orig_graphmodule_maybe
+
         if new_code.co_freevars:
             cg.make_function_with_closure(name, new_code, True, stack_len)
         else:
@@ -2271,6 +2280,14 @@ class InliningInstructionTranslator(InstructionTranslatorBase):
 
             trace_call_log.debug("%s", LazyString(get_trace_call_log_str))
         log.debug("INLINING %s%s", code, suffix)
+
+        # if we're calling a GraphModule method, then add the GraphModule
+        # to its forward function's context
+        self_maybe = func.fn.__self__ if func.has_self() else None
+        if self_maybe and isinstance(self_maybe, torch.fx.GraphModule):
+            code_context.get_context(self_maybe.forward.__code__)[
+                "orig_graphmodule"
+            ] = self_maybe
 
         tracer: InliningInstructionTranslator
         if is_generator(code):

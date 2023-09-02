@@ -3,6 +3,7 @@
 PYTEST_DONT_REWRITE (prevents pytest from rewriting assertions, which interferes
 with test_export_persist_assert)
 """
+import copy
 import functools
 import inspect
 import math
@@ -3801,6 +3802,127 @@ def forward(self, arg0_1, arg1_1, arg2_1):
     sum_1 = torch.ops.aten.sum.default(out_dtype);  out_dtype = None
     return sum_1""",
         )
+
+    def test_reexport_preserves_fx_node_metadata(self):
+        class Module1(torch.nn.Module):
+            def forward(self, x):
+                return torch.sin(x)
+
+        class Module2(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.mod1 = Module1()
+
+            def forward(self, x):
+                x = torch.cos(x)
+                x = self.mod1(x)
+                x = torch.relu(x)
+                return x
+
+        def fn(x):
+            return torch.abs(x)
+
+        mod = Module2()
+        inp = torch.randn(3, 3)
+
+        gm, _ = torch._dynamo.export(mod)(inp)
+
+        # replace relu with fn
+        gm_edit = copy.deepcopy(gm)
+        for nd in gm_edit.graph.nodes:
+            if nd.target == torch.relu:
+                nd.target = fn
+                nd.meta.clear()
+                break
+        gm_edit.recompile()
+
+        gm2, _ = torch._dynamo.export(gm_edit)(inp)
+
+        # check for source code
+        gm_code = gm.print_readable(print_output=False)
+        gm_edit_code = gm_edit.print_readable(print_output=False)
+        gm2_code = gm2.print_readable(print_output=False)
+        for code in (gm_code, gm_edit_code, gm2_code):
+            self.assertIn("x = torch.cos(x)", code)
+            self.assertIn("return torch.sin(x)", code)
+        self.assertIn("x = torch.relu(x)", gm_code)
+        self.assertNotIn("x = torch.relu(x)", gm_edit_code)
+        self.assertNotIn("x = torch.relu(x)", gm2_code)
+        self.assertIn("return torch.abs(x)", gm2_code)
+
+        # check for other metadata
+        for op in (torch.sin, torch.cos):
+            nd1 = next(filter(lambda nd: nd.target == op, gm.graph.nodes))
+            nd2 = next(filter(lambda nd: nd.target == op, gm2.graph.nodes))
+            self.assertTrue(
+                ("nn_module_stack" in nd1.meta) == ("nn_module_stack" in nd2.meta)
+            )
+            if "nn_module_stack" in nd1.meta:
+                self.assertEqual(
+                    nd1.meta["nn_module_stack"], nd2.meta["nn_module_stack"]
+                )
+            self.assertEqual(nd1.meta["source_fn"], nd2.meta["source_fn"])
+            self.assertEqual(nd1.meta["stack_trace"], nd2.meta["stack_trace"])
+
+    def test_reexport_preserves_fx_node_metadata_recompile(self):
+        def fn(x):
+            return torch.sin(x)
+
+        gm, _ = torch._dynamo.export(fn)(torch.randn(3, 3))
+        do_export = torch._dynamo.export(gm)
+        torch._dynamo.optimize("eager")(fn)(torch.randn(3, 3))
+        gm1, _ = do_export(torch.randn(3, 3))
+        gm2, _ = do_export(torch.randn(5, 3))
+
+        self.assertIn("return torch.sin(x)", gm1.print_readable(print_output=False))
+        self.assertIn("return torch.sin(x)", gm2.print_readable(print_output=False))
+
+    def test_reexport_preserves_fx_node_metadata_inline(self):
+        # currently fails
+        pass
+
+        def f1(x):
+            return torch.sin(x)
+
+        gm, _ = torch._dynamo.export(f1)(torch.randn(3, 3))
+
+        def f2(x):
+            x = torch.cos(x)
+            return gm(x)
+
+        gm2, _ = torch._dynamo.export(f2)(torch.randn(3, 3))
+
+        breakpoint()
+        self.assertIn("return torch.sin(x)", gm2.print_readable(print_output=False))
+
+    def test_reexport_preserves_fx_node_metadata_graph_break(self):
+        # currently fails
+        pass
+
+        def fn(x):
+            x = torch.sin(x)
+            x = torch.abs(x)
+            return torch.cos(x)
+
+        def bad_fn(x):
+            torch._dynamo.graph_break()
+            return x
+
+        gm, _ = torch._dynamo.export(fn)(torch.randn(3, 3))
+
+        # replace abs with graph break
+        gm_edit = copy.deepcopy(gm)
+        for nd in gm_edit.graph.nodes:
+            if nd.target == torch.abs:
+                nd.target = bad_fn
+                nd.meta.clear()
+                break
+        gm_edit.recompile()
+
+        # will probably need to use a custom backend instead of export
+        gm2, _ = torch._dynamo.export(gm_edit)(torch.randn(3, 3))
+        breakpoint()
+        self.assertIn("return torch.cos(x)", gm2.print_readable(print_output=False))
 
 
 common_utils.instantiate_parametrized_tests(ExportTests)
