@@ -3980,6 +3980,30 @@ def scaled_dot_product_flash_attention(
     )
 
 
+@register_decomposition(aten.randint.low)
+def randint_low(
+    low: int,
+    high: int,
+    size: List[torch.SymInt],
+    *,
+    dtype: Optional[torch.dtype] = torch.long,
+    layout: Optional[torch.layout] = None,
+    device: Optional[torch.device] = None,
+    pin_memory: Optional[bool] = None,
+):
+    # aten::randint.low(int low, int high, SymInt[] size, *, ScalarType? dtype=long, Layout? layout=None, Device? device=None, bool? pin_memory=None) -> Tensor
+    return torch.floor(
+        torch.rand(
+            size=size,
+            layout=layout,
+            device=device,
+            pin_memory=pin_memory,
+        )
+        * (high - low)
+        + low
+    ).to(dtype=dtype)
+
+
 def register_inplace(aten_op, outplace_op):
     @register_decomposition(aten_op)
     def inplace_op(*args, **kwargs):
