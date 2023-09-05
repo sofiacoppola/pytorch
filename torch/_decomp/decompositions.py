@@ -3980,6 +3980,21 @@ def scaled_dot_product_flash_attention(
     )
 
 
+@register_decomposition(aten.unbind)
+def unbind(t: Tensor, dim: int = 0) -> TensorSequenceType:
+    dim = utils.canonicalize_dim(t.ndim, dim)
+    torch._check_index(
+        len(t.shape) > 0,
+        lambda: "Dimension specified as 0 but tensor has no dimensions",
+    )
+    if t.shape[dim] == 0:
+        return tuple()
+    else:
+        return tuple(
+            torch.squeeze(s, dim) for s in torch.tensor_split(t, t.shape[dim], dim)
+        )
+
+
 def register_inplace(aten_op, outplace_op):
     @register_decomposition(aten_op)
     def inplace_op(*args, **kwargs):
