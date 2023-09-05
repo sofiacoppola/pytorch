@@ -3980,6 +3980,11 @@ def scaled_dot_product_flash_attention(
     )
 
 
+@register_decomposition(aten.randint.default)
+def randint(high, size, **kwargs):
+    return aten.randint.low(0, high, size, **kwargs)
+
+
 def register_inplace(aten_op, outplace_op):
     @register_decomposition(aten_op)
     def inplace_op(*args, **kwargs):
