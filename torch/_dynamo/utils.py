@@ -63,7 +63,7 @@ from torch import fx
 from torch._dispatch.python import enable_python_dispatcher
 from torch._subclasses.fake_tensor import FakeTensor, is_fake
 from torch.nn.modules.lazy import LazyModuleMixin
-from torch.utils._pytree import tree_map
+from torch.utils._pytree import LeafSpec, tree_map, TreeSpec
 
 
 counters = collections.defaultdict(collections.Counter)
@@ -409,7 +409,7 @@ def is_typing(value):
         return isinstance(value, typing._GenericAlias)
     else:
         return isinstance(
-            value, (typing._SpecialGenericAlias, typing._UnionGenericAlias)
+            value, (typing._SpecialGenericAlias, typing._UnionGenericAlias, typing._SpecialForm)
         )
 
 
@@ -2086,3 +2086,7 @@ def get_static_address_type(t):
         return getattr(t, "_dynamo_static_input_type", None)
 
     return None
+
+
+def is_treespec_cls(cls):
+    return cls in (LeafSpec, TreeSpec)
