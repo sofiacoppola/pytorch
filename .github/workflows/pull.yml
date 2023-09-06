@@ -101,6 +101,7 @@ jobs:
       docker-image: ${{ needs.linux-jammy-py3_9-clang12-asan-build.outputs.docker-image }}
       test-matrix: ${{ needs.linux-jammy-py3_9-clang12-asan-build.outputs.test-matrix }}
       sync-tag: asan-test
+      timeout-minutes: 200
 
   linux-focal-py3_8-clang10-onnx-build:
     name: linux-focal-py3.8-clang10-onnx
